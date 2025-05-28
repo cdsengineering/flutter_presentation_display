@@ -29,9 +29,7 @@ class FlutterPresentationDisplayPlugin : FlutterPlugin, ActivityAware, MethodCha
   private var presentation: PresentationDisplay? = null
   private var flutterBinding: FlutterPlugin.FlutterPluginBinding? = null
 
-  override fun onAttachedToEngine(
-          @NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding
-  ) {
+  override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
     channel = MethodChannel(flutterPluginBinding.binaryMessenger, secondaryViewTypeId)
     channel.setMethodCallHandler(this)
 
@@ -40,25 +38,6 @@ class FlutterPresentationDisplayPlugin : FlutterPlugin, ActivityAware, MethodCha
     val displayConnectedStreamHandler = DisplayConnectedStreamHandler(displayManager)
     eventChannel.setStreamHandler(displayConnectedStreamHandler)
     flutterBinding = flutterPluginBinding
-  }
-
-  companion object {
-    private const val viewTypeEventsId = "presentation_display_channel_events"
-    private const val secondaryViewTypeId = "presentation_display_channel"
-    private const val mainViewTypeId = "main_display_channel"
-
-    private var displayManager: DisplayManager? = null
-
-    @JvmStatic
-    fun registerWith(registrar: PluginRegistry.Registrar) {
-      val channel = MethodChannel(registrar.messenger(), secondaryViewTypeId)
-      channel.setMethodCallHandler(FlutterPresentationDisplayPlugin())
-
-      val eventChannel = EventChannel(registrar.messenger(), viewTypeEventsId)
-      displayManager = registrar.activity()?.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
-      val displayConnectedStreamHandler = DisplayConnectedStreamHandler(displayManager)
-      eventChannel.setStreamHandler(displayConnectedStreamHandler)
-    }
   }
 
   override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -132,22 +111,52 @@ class FlutterPresentationDisplayPlugin : FlutterPlugin, ActivityAware, MethodCha
     }
   }
 
-  private fun createFlutterEngine(tag: String): FlutterEngine? {
-    return context?.let {
-      var flutterEngine = FlutterEngineCache.getInstance().get(tag)
-      if (flutterEngine == null) {
-        flutterEngine = FlutterEngine(it)
-        flutterEngine.navigationChannel.setInitialRoute(tag)
-        FlutterInjector.instance().flutterLoader().startInitialization(it)
-        val path = FlutterInjector.instance().flutterLoader().findAppBundlePath()
-        val entrypoint = DartExecutor.DartEntrypoint(path, "secondaryDisplayMain")
-        flutterEngine.dartExecutor.executeDartEntrypoint(entrypoint)
-        flutterEngine.lifecycleChannel.appIsResumed()
-        FlutterEngineCache.getInstance().put(tag, flutterEngine)
-      }
-      flutterEngine
-    }
+/**
+ * Crée (ou récupère) un FlutterEngine associé au tag donné.
+ * Le moteur est lancé sans assertions (--disable-dart-asserts) afin
+ * d’éviter l’activation automatique des flags debug-paint.
+ */
+private fun createFlutterEngine(tag: String): FlutterEngine? {
+  return context?.let { ctx ->
+
+    // 1) Essayons d'abord de récupérer un moteur déjà mis en cache
+    val cache = FlutterEngineCache.getInstance()
+    var engine = cache.get(tag)
+    Log.i("Plugin", "createFlutterEngine: fromCache=${engine != null}")
+    if (engine != null) return engine
+
+    //FlutterEngineCache.getInstance().clear()     // ← vide tout
+    //FlutterEngineCache.getInstance().put(tag, engine)
+
+    // 2) Initialisation complète du FlutterLoader
+    val loader = FlutterInjector.instance().flutterLoader()
+    loader.startInitialization(ctx)
+    loader.ensureInitializationComplete(          // version synchrone
+      ctx,
+      arrayOf("--disable-dart-asserts")           // désactive toutes les assertions
+    )
+
+    // 3) Création du moteur Flutter
+    engine = FlutterEngine(ctx)
+    engine.navigationChannel.setInitialRoute(tag)
+
+    // 4) Lancement du point d’entrée Dart
+    val entrypoint = DartExecutor.DartEntrypoint(
+      loader.findAppBundlePath(),
+      "secondaryDisplayMain"                      // doit correspondre au @pragma Dart
+    )
+    engine.dartExecutor.executeDartEntrypoint(entrypoint)
+    engine.lifecycleChannel.appIsResumed()
+
+    // 5) Mise en cache pour ré-utilisation
+    FlutterEngineCache.getInstance().put(tag, engine)
+
+    engine
   }
+}
+
+
+
 
   override fun onAttachedToActivity(binding: ActivityPluginBinding) {
     context = binding.activity
@@ -165,7 +174,16 @@ class FlutterPresentationDisplayPlugin : FlutterPlugin, ActivityAware, MethodCha
   override fun onDetachedFromActivityForConfigChanges() {
     context = null
   }
+
+  companion object {
+    private const val viewTypeEventsId = "presentation_display_channel_events"
+    private const val secondaryViewTypeId = "presentation_display_channel"
+    private const val mainViewTypeId = "main_display_channel"
+
+    private var displayManager: DisplayManager? = null
+  }
 }
+
 
 class DisplayConnectedStreamHandler(private val displayManager: DisplayManager?) : EventChannel.StreamHandler {
 
