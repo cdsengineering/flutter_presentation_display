@@ -2,6 +2,8 @@
 
 `Flutter Presentation Display` is a Flutter plugin designed to run on multiple displays, including handling secondary (presentation) display. It provides methods to interact with connected displays, transfer data, and respond to display connection changes. Tested on SUNMI T2s.
 
+It has been forked and slightly edited by CDS to be compatible with Flutter 3.29
+
 ## Features
 
 - Retrieve a list of connected displays
